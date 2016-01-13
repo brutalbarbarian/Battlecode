@@ -9,6 +9,10 @@ import java.util.Random;
  * Created by Lu on 11/01/2016.
  */
 public abstract class RobotAI {
+    protected static final int CMD_TARGET = 0;
+    protected static final int CMD_DIRECTION = 1;
+    protected static final int CMD_RETREAT = 2;
+
     protected static final Direction[] directions = {Direction.NORTH, Direction.NORTH_EAST, Direction.EAST, Direction.SOUTH_EAST,
             Direction.SOUTH, Direction.SOUTH_WEST, Direction.WEST, Direction.NORTH_WEST};
     protected static final RobotType[] robotTypes = {RobotType.SCOUT, RobotType.SOLDIER, RobotType.SOLDIER, RobotType.SOLDIER,
@@ -61,9 +65,9 @@ public abstract class RobotAI {
         }
     }
 
-    public Pair<Direction, Integer> getClosestValidDirection(Direction dir) {
+    public Direction getClosestValidDirection(Direction dir) {
         if (rc.canMove(dir)) {
-            return new Pair<>(dir, 0);
+            return dir;
         }
 
         Direction dirLeft = dir;
@@ -76,9 +80,19 @@ public abstract class RobotAI {
                 testDir = (dirRight = dirRight.rotateRight());
             }
             if (rc.canMove(testDir)) {
-                return new Pair<>(testDir, (i + 1) / 2);
+                return testDir;
             }
         }
-        return new Pair<>(Direction.NONE, -1);    // No solutions found
+        return Direction.NONE;    // No solutions found
+    }
+
+    public int distanceBetween(Direction dir1, Direction dir2) {
+        rc.setIndicatorString(0, dir1 + ":" + dir1.ordinal() + "," + dir2 + ":" + dir2.ordinal());
+        int dist = Math.abs(dir2.ordinal() - dir1.ordinal());
+        if (dist < 4) {
+            return dist;
+        } else {
+            return 8 - dist;
+        }
     }
 }

@@ -8,6 +8,8 @@ import brutalbarbarian.utils.Pair;
  */
 public class ArchonAI extends RobotAI {
     Direction prefDirection;
+    int movesignaldelay;
+    int stuckTurns;
 
     public ArchonAI(RobotController rc) {
         super(rc);
@@ -18,38 +20,53 @@ public class ArchonAI extends RobotAI {
         int fate = rand.nextInt(1000);
 
         prefDirection = directions[fate % 8];
+        movesignaldelay = 4;
+        stuckTurns = 0;
     }
 
     @Override
     protected void doTurn() throws GameActionException {
         int fate = rand.nextInt(1000);
 
-        if (rc.isCoreReady()) {
-            RobotInfo[] robotsWithinRange = rc.senseNearbyRobots();//sensorRange);
+        RobotInfo[] robotsWithinRange = rc.senseNearbyRobots();//sensorRange);
 
-            int x = 0, y = 0;
-            int enemyCount = 0;
-            int friendlyCount = 0;
-//            RobotInfo closestEnemy = null;
-//            int closestEnemyDistance = Integer.MAX_VALUE;
-            for (RobotInfo robot : robotsWithinRange) {
-                if (robot.team == team) {
-                    friendlyCount++;
-                } else if (robot.type != RobotType.ZOMBIEDEN) {
-                    int distance = robot.location.distanceSquaredTo(rc.getLocation());
-//                    if (distance < closestEnemyDistance) {
-//                        closestEnemy = robot;
-//                        closestEnemyDistance = distance;
-//                    }
-                    x += robot.location.x;
-                    y += robot.location.y;
-                    enemyCount++;
+        int x = 0, y = 0;
+        int enemyCount = 0;
+        int friendlyCount = 0;
+        RobotInfo closestEnemy = null;
+        int closestEnemyDistance = Integer.MAX_VALUE;
+        RobotInfo closestHurtFriendly = null;
+        int closestHurtFriendlyDistance = Integer.MAX_VALUE;
+        for (RobotInfo robot : robotsWithinRange) {
+            int distance = robot.location.distanceSquaredTo(rc.getLocation());
+            if (robot.team == team) {
+                if (robot.health < robot.maxHealth && robot.type != RobotType.ARCHON) {
+                    if (distance < closestHurtFriendlyDistance) {
+                        closestHurtFriendly = robot;
+                        closestHurtFriendlyDistance = distance;
+                    }
                 }
+                friendlyCount++;
+            } else if (robot.type != RobotType.ZOMBIEDEN) {
+                if (distance < closestEnemyDistance) {
+                    closestEnemy = robot;
+                    closestEnemyDistance = distance;
+                }
+                x += robot.location.x;
+                y += robot.location.y;
+                enemyCount++;
             }
+        }
 
-            Pair<Direction, Integer> moveDirection;
+        if (rc.isWeaponReady() && closestHurtFriendly != null) {
+            rc.repair(closestHurtFriendly.location);
+//            return;
+        }
+
+        if (rc.isCoreReady()) {
+            Direction moveDirection;
             // If there are any enemies in range. Move in opposite direction of any enemy
-            if (enemyCount > friendlyCount) {
+            if (enemyCount * 1.2 > friendlyCount) {
                 // Too cowardly right now..
 
                 // Move in different direction?
@@ -73,26 +90,99 @@ public class ArchonAI extends RobotAI {
 
                 // Well. We probably don't want to keep going in whatever our previous direction, since there's
                 // enemy's nearby.
-                if (moveDirection.a != Direction.NONE) {
-                    prefDirection = moveDirection.a;
+                if (moveDirection != Direction.NONE) {
+                    prefDirection = moveDirection;
                 }
             } else {
-                // Probably should check for nearby resources. Oh well.
-                moveDirection = getClosestValidDirection(prefDirection);
-                if (moveDirection.b >= 2) {
-                    prefDirection = moveDirection.a;
+                if (rc.hasBuildRequirements(RobotType.SOLDIER)) {
+                    // we'll use the pref direction to also try build a soldier there
+                    Direction buildDirection = getClosestValidDirection(prefDirection.opposite());
+                    if (rc.canBuild(buildDirection, RobotType.SOLDIER)) {
+                        rc.build(buildDirection, RobotType.SOLDIER);
+                        return;
+                    }
                 }
 
-                // we'll use the pref direction to also try build a soldier there
-                if (rc.hasBuildRequirements(RobotType.SOLDIER) && rc.canBuild(moveDirection.a, RobotType.SOLDIER)) {
-                    rc.build(moveDirection.a, RobotType.SOLDIER);
+                // Probably should check for nearby resources. Oh well.
+                Direction proposedDirection = prefDirection;
+                if (enemyCount > 0) {
+                    MapLocation loc = new MapLocation(x/enemyCount, y/enemyCount);
+                    if (!loc.equals(rc.getLocation())) {
+                         proposedDirection = rc.getLocation().directionTo(loc);
+
+                        // Let's tell everyone there's an enemy nearby.
+                        if (movesignaldelay == 0) {
+                            rc.broadcastMessageSignal(CMD_DIRECTION, proposedDirection.ordinal(), sensorRange * 2);
+                            movesignaldelay = 4;
+                            return;
+                        } else {
+                            // if target unit actually has a meaningful attack, and we're in their range...
+                            // we probably want to move back
+                            if (closestEnemy.attackPower > 0 && closestEnemy.type.attackRadiusSquared <= closestEnemyDistance) {
+                                // How about we try move back a step mhmm?
+                                proposedDirection = proposedDirection.opposite();
+                            }
+                        }
+                    }
+                } else {
+                    // Let's check for nearby resources
+                    MapLocation[] partLocations = rc.sensePartLocations(sensorRange);
+                    MapLocation closestPartLocation = null;
+                    int closestPartLocationDistance = Integer.MAX_VALUE;
+                    for (MapLocation location : partLocations) {
+                        int distance = location.distanceSquaredTo(rc.getLocation());
+                        if (distance < closestPartLocationDistance) {
+                            closestPartLocationDistance = distance;
+                            closestPartLocation = location;
+                        }
+                    }
+                    if (closestPartLocation != null) {
+                        proposedDirection = rc.getLocation().directionTo(closestPartLocation);
+                    }
+                }
+
+                if (rc.senseRubble(rc.getLocation().add(proposedDirection)) >= GameConstants.RUBBLE_SLOW_THRESH) {
+                    rc.clearRubble(proposedDirection);
+                    moveDirection = Direction.NONE;
+                    prefDirection = moveDirection;  // Wooo we found parts. We wanna go there!
+                } else {
+                    moveDirection = getClosestValidDirection(proposedDirection);
+
+                    if (moveDirection == Direction.NONE) {
+                        // Welp. We're stuck.
+                        stuckTurns++;
+                        if (stuckTurns >= 4) {
+                            stuckTurns = 0;
+                            prefDirection = prefDirection.opposite();
+
+                        }
+                    } else if (moveDirection != Direction.NONE && distanceBetween(moveDirection, prefDirection) >= 2) {
+                        // Do this a third of the time rather then every time.
+                        if (fate % 6 < 1) {    // 1 in 6
+                            prefDirection = moveDirection;
+                            // Always send a new signal out whenever we change pref direction
+                            rc.broadcastMessageSignal(CMD_DIRECTION, prefDirection.ordinal(), sensorRange * 2);
+                            movesignaldelay = 4;
+                            return;
+                        } else if (fate % 6 < 2) {  // 1 in 6
+                            moveDirection = Direction.NONE; // Don't attempt to move there... but we still want to broadcast pref
+                        }
+                    }
+                }
+
+                if (movesignaldelay == 0) {
+                    rc.broadcastMessageSignal(CMD_DIRECTION, prefDirection.ordinal(), sensorRange * 2);
+                    movesignaldelay = 4;
                     return;
+                } else {
+                    movesignaldelay--;
                 }
             }
 
             // Try figure find a closest valid location to move.
-            if (moveDirection.a != Direction.NONE) {
-                rc.move(moveDirection.a);
+            if (moveDirection != Direction.NONE) {
+                stuckTurns = 0; // reset stuck turns, since we've happily moved somewhere
+                rc.move(moveDirection);
             } else {
                 // Do what??
             }
