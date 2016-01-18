@@ -1,6 +1,7 @@
 package brutalbarbarian;
 
 import battlecode.common.*;
+import battlecode.world.signal.IndicatorStringSignal;
 import brutalbarbarian.utils.Pair;
 
 /**
@@ -26,16 +27,15 @@ public class ArchonAI extends RobotAI {
 
     @Override
     protected void doTurn() throws GameActionException {
+        movesignaldelay--;
         int fate = rand.nextInt(1000);
 
         RobotInfo[] robotsWithinRange = rc.senseNearbyRobots();//sensorRange);
 
         int x = 0, y = 0;
-        int enemyCount = 0;
-        int friendlyCount = 0;
-        RobotInfo closestEnemy = null;
         int closestEnemyDistance = Integer.MAX_VALUE;
-        RobotInfo closestHurtFriendly = null;
+        int friendlyCount = 0, enemyCount = 0;
+        RobotInfo closestHurtFriendly = null, closestEnemy = null;
         int closestHurtFriendlyDistance = Integer.MAX_VALUE;
         for (RobotInfo robot : robotsWithinRange) {
             int distance = robot.location.distanceSquaredTo(rc.getLocation());
@@ -47,8 +47,8 @@ public class ArchonAI extends RobotAI {
                     }
                 }
                 friendlyCount++;
-            } else if (robot.type != RobotType.ZOMBIEDEN) {
-                if (distance < closestEnemyDistance) {
+            } else if (robot.team != Team.NEUTRAL) {//(robot.type != RobotType.ZOMBIEDEN) {
+                if (distance < closestEnemyDistance || (closestEnemy != null && closestEnemy.type == RobotType.ZOMBIEDEN)) {
                     closestEnemy = robot;
                     closestEnemyDistance = distance;
                 }
@@ -57,6 +57,8 @@ public class ArchonAI extends RobotAI {
                 enemyCount++;
             }
         }
+
+
 
         if (rc.isWeaponReady() && closestHurtFriendly != null) {
             rc.repair(closestHurtFriendly.location);
@@ -67,8 +69,6 @@ public class ArchonAI extends RobotAI {
             Direction moveDirection;
             // If there are any enemies in range. Move in opposite direction of any enemy
             if (enemyCount * 1.2 > friendlyCount) {
-                // Too cowardly right now..
-
                 // Move in different direction?
                 MapLocation loc = new MapLocation(x/enemyCount, y/enemyCount);
                 Direction proposedDirection;
@@ -86,32 +86,35 @@ public class ArchonAI extends RobotAI {
                 } else if (fate % 3 == 2) {
                     proposedDirection = proposedDirection.rotateRight();
                 }
-                moveDirection = getClosestValidDirection(proposedDirection);
+                moveDirection = getClosestValidDirection(proposedDirection, (dir)->{return rc.canMove(dir);});
 
                 // Well. We probably don't want to keep going in whatever our previous direction, since there's
                 // enemy's nearby.
                 if (moveDirection != Direction.NONE) {
                     prefDirection = moveDirection;
                 }
+
+                rc.setIndicatorString(0, "Running away in direction: " + moveDirection);
             } else {
                 if (rc.hasBuildRequirements(RobotType.SOLDIER)) {
                     // we'll use the pref direction to also try build a soldier there
-                    Direction buildDirection = getClosestValidDirection(prefDirection.opposite());
+                    Direction buildDirection = getClosestValidDirection(prefDirection.opposite(), (dir) -> {return rc.canBuild(dir, RobotType.SOLDIER);});
                     if (rc.canBuild(buildDirection, RobotType.SOLDIER)) {
                         rc.build(buildDirection, RobotType.SOLDIER);
                         return;
                     }
                 }
 
-                // Probably should check for nearby resources. Oh well.
                 Direction proposedDirection = prefDirection;
                 if (enemyCount > 0) {
                     MapLocation loc = new MapLocation(x/enemyCount, y/enemyCount);
                     if (!loc.equals(rc.getLocation())) {
                          proposedDirection = rc.getLocation().directionTo(loc);
 
+                        rc.setIndicatorString(0, "Enemy Found at: " + proposedDirection);
+
                         // Let's tell everyone there's an enemy nearby.
-                        if (movesignaldelay == 0) {
+                        if (movesignaldelay <= 0 && proposedDirection != Direction.NONE) {
                             rc.broadcastMessageSignal(CMD_DIRECTION, proposedDirection.ordinal(), sensorRange * 2);
                             movesignaldelay = 4;
                             return;
@@ -138,15 +141,21 @@ public class ArchonAI extends RobotAI {
                     }
                     if (closestPartLocation != null) {
                         proposedDirection = rc.getLocation().directionTo(closestPartLocation);
+                        if (proposedDirection != Direction.NONE) {
+                            rc.setIndicatorString(0, "Resource Found at: " + proposedDirection);
+
+                            prefDirection = proposedDirection;  // We see resource. Let's go there!
+                        }
                     }
                 }
 
                 if (rc.senseRubble(rc.getLocation().add(proposedDirection)) >= GameConstants.RUBBLE_SLOW_THRESH) {
+                    rc.setIndicatorString(1, "Clear Rubble: " + proposedDirection);
+
                     rc.clearRubble(proposedDirection);
                     moveDirection = Direction.NONE;
-                    prefDirection = moveDirection;  // Wooo we found parts. We wanna go there!
                 } else {
-                    moveDirection = getClosestValidDirection(proposedDirection);
+                    moveDirection = getClosestValidDirection(proposedDirection, (dir)->{return rc.canMove(dir);});
 
                     if (moveDirection == Direction.NONE) {
                         // Welp. We're stuck.
@@ -155,8 +164,13 @@ public class ArchonAI extends RobotAI {
                             stuckTurns = 0;
                             prefDirection = prefDirection.opposite();
 
+                            rc.setIndicatorString(1, "Stuck. Changing Direction to: " + prefDirection);
                         }
                     } else if (moveDirection != Direction.NONE && distanceBetween(moveDirection, prefDirection) >= 2) {
+                        // If we're walking towards the edge of the map, then sure, let's change direction.
+                        // Otherwise, don't.
+
+
                         // Do this a third of the time rather then every time.
                         if (fate % 6 < 1) {    // 1 in 6
                             prefDirection = moveDirection;
@@ -170,12 +184,12 @@ public class ArchonAI extends RobotAI {
                     }
                 }
 
-                if (movesignaldelay == 0) {
+                if (movesignaldelay <= 0) {
+                    rc.setIndicatorString(1, "Command Move: " + prefDirection);
+
                     rc.broadcastMessageSignal(CMD_DIRECTION, prefDirection.ordinal(), sensorRange * 2);
                     movesignaldelay = 4;
                     return;
-                } else {
-                    movesignaldelay--;
                 }
             }
 

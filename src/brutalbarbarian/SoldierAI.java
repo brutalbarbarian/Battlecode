@@ -7,6 +7,8 @@ import brutalbarbarian.utils.Pair;
  * Created by Lu on 11/01/2016.
  */
 public class SoldierAI extends RobotAI {
+    static final int DECAY_TIME = 5;
+
     public SoldierAI(RobotController rc) {
         super(rc);
     }
@@ -48,7 +50,7 @@ public class SoldierAI extends RobotAI {
             int[] message = closestSignal.getMessage();
             if (closestSignal.getTeam().isPlayer() && message != null && message[0] == CMD_DIRECTION) {
                 orderedDirection = Direction.values()[message[1]];
-                orderDecay = 6; // 8 turns before we ignore this signal.
+                orderDecay = DECAY_TIME;
                 rc.setIndicatorString(0, "Recieved Signal:" + orderedDirection);
             }
         }
@@ -77,7 +79,7 @@ public class SoldierAI extends RobotAI {
                     closestZombie = robot;
                     closestZombieDistance = distance;
                 }
-            } else {
+            } else if (robot.team != Team.NEUTRAL) {
                 if (distance < closestEnemyDistance) {
                     closestEnemy = robot;
                     closestEnemyDistance = distance;
@@ -92,6 +94,7 @@ public class SoldierAI extends RobotAI {
             rc.attackLocation(closestEnemy.location);
         } else if (rc.isCoreReady()) {
             Direction moveDirection;
+
             if (orderedDirection != Direction.NONE) {
                 if (rc.senseRubble(rc.getLocation().add(orderedDirection)) >= GameConstants.RUBBLE_SLOW_THRESH) {
                     rc.clearRubble(orderedDirection);
@@ -112,14 +115,31 @@ public class SoldierAI extends RobotAI {
                 }
             }
             if (moveDirection != Direction.NONE) {
-                moveDirection = getClosestValidDirection(moveDirection);
-                if (orderedDirection != Direction.NONE && distanceBetween(orderedDirection, moveDirection) >= 3) {
-                    return; // Do nothing. If ordered, stop attempting to backtrack.
+                if (rc.senseRubble(rc.getLocation().add(moveDirection)) >= GameConstants.RUBBLE_SLOW_THRESH) {
+                    rc.setIndicatorString(1, "Attempting to clear rubble at: " + moveDirection);
+                    rc.clearRubble(moveDirection);
+                    return;
                 }
 
-                if (rc.senseRubble(rc.getLocation().add(moveDirection)) >= GameConstants.RUBBLE_SLOW_THRESH) {
-                    rc.clearRubble(moveDirection);
-                } else if (rc.canMove(moveDirection)) {
+                moveDirection = getClosestValidDirection(moveDirection, (dir)->{return rc.canMove(dir);});
+                if (orderedDirection != Direction.NONE) {
+                    if (closestLeader != null
+                            && closestLeader.location.add(orderedDirection).equals(
+                            rc.getLocation().add(moveDirection))) {
+                        return; // Don't walk in front of the leader. That's rude.
+                    } else if (distanceBetween(orderedDirection, moveDirection) >= 3) {
+                        return; // Do nothing. If ordered, stop attempting to backtrack.
+                    } else if (closestEnemy != null && rc.getLocation().distanceSquaredTo(closestEnemy.location) <=
+                            attackRange) {
+                        // if we're ordered to move in that general direction... stop cause we're too close to the enemy
+                        Direction dirToEnemy = rc.getLocation().directionTo(closestEnemy.location);
+                        if (distanceBetween(dirToEnemy, orderedDirection) >= 2) {
+                            return;
+                        }
+                    }
+                }
+                if (rc.canMove(moveDirection)) {
+                    rc.setIndicatorString(1, "Attempting to move: " + moveDirection);
                     rc.move(moveDirection);
                 }
             }

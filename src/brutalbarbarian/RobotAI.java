@@ -1,8 +1,8 @@
 package brutalbarbarian;
 
 import battlecode.common.*;
-import brutalbarbarian.utils.Pair;
 
+import java.util.HashMap;
 import java.util.Random;
 
 /**
@@ -18,10 +18,10 @@ public abstract class RobotAI {
     protected static final RobotType[] robotTypes = {RobotType.SCOUT, RobotType.SOLDIER, RobotType.SOLDIER, RobotType.SOLDIER,
             RobotType.GUARD, RobotType.GUARD, RobotType.VIPER, RobotType.TURRET};
 
-    RobotType type;
-    protected int attackRange, sensorRange;
-    Team team;
-    Random rand;
+    final RobotType type;
+    final int attackRange, sensorRange;
+    final Team team;
+    final Random rand;
 
     protected RobotController rc;
 
@@ -45,28 +45,110 @@ public abstract class RobotAI {
                 try {
                     doTurn();
                 } catch (GameActionException e) {
-                    System.out.println(e.getMessage());
+                    rc.setIndicatorString(3, e.getMessage());
+//                    System.out.println(e.getMessage());
                     e.printStackTrace();
                 }
                 Clock.yield();
             }
         } catch (Exception e) {
-            System.out.println(e.getMessage());
+//            System.out.println(e.getMessage());
             e.printStackTrace();
         }
     }
 
     public void initialise() {
         try {
+            initialiseCaches();
             doInitialise();
         } catch (Exception e) {
-            System.out.println(e.getMessage());
+//            System.out.println(e.getMessage());
             e.printStackTrace();
         }
     }
 
-    public Direction getClosestValidDirection(Direction dir) {
-        if (rc.canMove(dir)) {
+    interface RobotWeightCheck {
+        float getRobotWeight(RobotInfo robot);
+    }
+    interface DirectionCheck{
+        boolean canUseDirection(Direction dir);
+    }
+
+    // Utility functions.
+    private void initialiseCaches() {
+        robotCache = new HashMap<>();
+    }
+
+    private void clearCaches() {
+        robotCache.clear();
+    }
+
+    private RobotInfo[] getRobotCache(int rangeSquared) {
+        RobotInfo[] robots = robotCache.getOrDefault(robotCache, null);
+        if (robots == null) {
+            robots = rc.senseNearbyRobots(rangeSquared);
+            robotCache.put(rangeSquared, robots);
+        }
+        return robots;
+    }
+
+    private HashMap<Integer, RobotInfo[]> robotCache;
+
+    public RobotInfo getHighestWeightRobotWithinRange(int rangeSquared, RobotWeightCheck check) {
+        RobotInfo[] robots = getRobotCache(rangeSquared);
+        RobotInfo bestCantidate = null;
+        float bestWeight = 0;
+        for (RobotInfo robot : robots) {
+            float weight = check.getRobotWeight(robot);
+            if (weight > bestWeight) {
+                bestWeight = weight;
+                bestCantidate = robot;
+            }
+        }
+        return bestCantidate;
+    }
+
+    public MapLocation getCentreOfMass(int rangeSquared, RobotWeightCheck check) {
+        RobotInfo[] robots = getRobotCache(rangeSquared);
+        float xWeight = 0, yWeight = 0, weightSum = 0;
+        for (RobotInfo robot : robots) {
+            float weight = check.getRobotWeight(robot);
+            if (weight > 0) {
+                xWeight += weight * robot.location.x;
+                yWeight += weight * robot.location.y;
+                weightSum += weight;
+            }
+        }
+        if (weightSum > 0) {
+            return null;
+        } else {
+            return new MapLocation(Math.round(xWeight/weightSum), Math.round(yWeight/weightSum));
+        }
+    }
+
+    public float getSumOfWeights(int rangeSquared, RobotWeightCheck check) {
+        RobotInfo[] robots = getRobotCache(rangeSquared);
+        float weightSum = 0;
+        for (RobotInfo robot : robots) {
+            float weight = check.getRobotWeight(robot);
+            if (weight > 0) {
+                weightSum += weight;
+            }
+        }
+        return weightSum;
+    }
+
+    public Direction getDirectionToCentreOfMass(int rangeSquared, RobotWeightCheck check) {
+        MapLocation loc = getCentreOfMass(rangeSquared, check);
+        if (loc == null) {
+            return Direction.NONE;
+        } else {
+            return rc.getLocation().directionTo(loc);
+        }
+    }
+
+    public Direction getClosestValidDirection(Direction dir, DirectionCheck locationCheck) {
+        if (locationCheck.canUseDirection(dir)) {
             return dir;
         }
 
@@ -79,7 +161,7 @@ public abstract class RobotAI {
             } else {
                 testDir = (dirRight = dirRight.rotateRight());
             }
-            if (rc.canMove(testDir)) {
+            if (locationCheck.canUseDirection(testDir)) {
                 return testDir;
             }
         }
@@ -87,7 +169,6 @@ public abstract class RobotAI {
     }
 
     public int distanceBetween(Direction dir1, Direction dir2) {
-        rc.setIndicatorString(0, dir1 + ":" + dir1.ordinal() + "," + dir2 + ":" + dir2.ordinal());
         int dist = Math.abs(dir2.ordinal() - dir1.ordinal());
         if (dist < 4) {
             return dist;

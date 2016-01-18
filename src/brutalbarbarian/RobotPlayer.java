@@ -64,7 +64,7 @@ public class RobotPlayer {
 //            case TTM:
 //                break;
             default:
-                System.out.println("Unknown Robot Type of " + rc.getType());
+                rc.setIndicatorString(0, "Unknown Robot Type of " + rc.getType());
         }
 
         if (ai != null) {
