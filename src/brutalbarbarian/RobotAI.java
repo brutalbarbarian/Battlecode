@@ -12,6 +12,7 @@ public abstract class RobotAI {
     protected static final int CMD_TARGET = 0;
     protected static final int CMD_DIRECTION = 1;
     protected static final int CMD_RETREAT = 2;
+    protected static final int CMD_HELP = 3;
 
     protected static final Direction[] directions = {Direction.NORTH, Direction.NORTH_EAST, Direction.EAST, Direction.SOUTH_EAST,
             Direction.SOUTH, Direction.SOUTH_WEST, Direction.WEST, Direction.NORTH_WEST};
@@ -176,4 +177,15 @@ public abstract class RobotAI {
             return 8 - dist;
         }
     }
+
+    public int encodeLocation(MapLocation loc) {
+        // we know the map is max 100x100.
+        return (loc.x << 7) + loc.y;
+    }
+
+    public MapLocation decodeLocation(int location) {
+        return new MapLocation(location >> 7, location & 127);
+    }
+
+
 }

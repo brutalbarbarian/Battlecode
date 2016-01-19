@@ -48,10 +48,15 @@ public class SoldierAI extends RobotAI {
 
 
             int[] message = closestSignal.getMessage();
-            if (closestSignal.getTeam().isPlayer() && message != null && message[0] == CMD_DIRECTION) {
+            if (message != null && message[0] == CMD_DIRECTION) {
                 orderedDirection = Direction.values()[message[1]];
                 orderDecay = DECAY_TIME;
                 rc.setIndicatorString(0, "Recieved Signal:" + orderedDirection);
+            } else if (message != null && message[0] == CMD_HELP) {
+                MapLocation location = decodeLocation(message[1]);
+                orderedDirection = rc.getLocation().directionTo(location);
+                orderDecay = DECAY_TIME;
+                rc.setIndicatorString(0, "Recieved Help Call: " + location + ", towards " + orderedDirection);
             }
         }
 

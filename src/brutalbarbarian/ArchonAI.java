@@ -31,6 +31,7 @@ public class ArchonAI extends RobotAI {
         int fate = rand.nextInt(1000);
 
         RobotInfo[] robotsWithinRange = rc.senseNearbyRobots();//sensorRange);
+        Signal[] signals = rc.emptySignalQueue();
 
         int x = 0, y = 0;
         int closestEnemyDistance = Integer.MAX_VALUE;
@@ -67,8 +68,10 @@ public class ArchonAI extends RobotAI {
 
         if (rc.isCoreReady()) {
             Direction moveDirection;
+            boolean headingForResources = false;
+            boolean foundEnemy = false;
             // If there are any enemies in range. Move in opposite direction of any enemy
-            if (enemyCount * 1.2 > friendlyCount) {
+            if (enemyCount > friendlyCount) {
                 // Move in different direction?
                 MapLocation loc = new MapLocation(x/enemyCount, y/enemyCount);
                 Direction proposedDirection;
@@ -96,55 +99,91 @@ public class ArchonAI extends RobotAI {
 
                 rc.setIndicatorString(0, "Running away in direction: " + moveDirection);
             } else {
-                if (rc.hasBuildRequirements(RobotType.SOLDIER)) {
-                    // we'll use the pref direction to also try build a soldier there
-                    Direction buildDirection = getClosestValidDirection(prefDirection.opposite(), (dir) -> {return rc.canBuild(dir, RobotType.SOLDIER);});
-                    if (rc.canBuild(buildDirection, RobotType.SOLDIER)) {
-                        rc.build(buildDirection, RobotType.SOLDIER);
-                        return;
-                    }
-                }
-
                 Direction proposedDirection = prefDirection;
-                if (enemyCount > 0) {
-                    MapLocation loc = new MapLocation(x/enemyCount, y/enemyCount);
-                    if (!loc.equals(rc.getLocation())) {
-                         proposedDirection = rc.getLocation().directionTo(loc);
+                boolean heardHelp = false;
+                for (Signal sig : signals) {
+                    if (sig.getTeam().isPlayer()) {
+                        int[] message = sig.getMessage();
+                        if (message != null && message[0] == CMD_HELP) {
+                            // recieved help call. go towards help
+                            MapLocation targetLocation = decodeLocation(message[1]);
+                            if (!targetLocation.equals(rc.getLocation())) {
+                                rc.setIndicatorString(0, "Heard help call for " + targetLocation);
 
-                        rc.setIndicatorString(0, "Enemy Found at: " + proposedDirection);
-
-                        // Let's tell everyone there's an enemy nearby.
-                        if (movesignaldelay <= 0 && proposedDirection != Direction.NONE) {
-                            rc.broadcastMessageSignal(CMD_DIRECTION, proposedDirection.ordinal(), sensorRange * 2);
-                            movesignaldelay = 4;
-                            return;
-                        } else {
-                            // if target unit actually has a meaningful attack, and we're in their range...
-                            // we probably want to move back
-                            if (closestEnemy.attackPower > 0 && closestEnemy.type.attackRadiusSquared <= closestEnemyDistance) {
-                                // How about we try move back a step mhmm?
-                                proposedDirection = proposedDirection.opposite();
+                                prefDirection = rc.getLocation().directionTo(targetLocation);
+                                proposedDirection = prefDirection;
+                                heardHelp = true;
+                                break;
                             }
                         }
                     }
-                } else {
-                    // Let's check for nearby resources
-                    MapLocation[] partLocations = rc.sensePartLocations(sensorRange);
-                    MapLocation closestPartLocation = null;
-                    int closestPartLocationDistance = Integer.MAX_VALUE;
-                    for (MapLocation location : partLocations) {
-                        int distance = location.distanceSquaredTo(rc.getLocation());
-                        if (distance < closestPartLocationDistance) {
-                            closestPartLocationDistance = distance;
-                            closestPartLocation = location;
+                }
+
+                if (!heardHelp) {
+                    if (rc.hasBuildRequirements(RobotType.SOLDIER)) {
+                        // we'll use the pref direction to also try build a soldier there
+                        Direction buildDirection = getClosestValidDirection(prefDirection.opposite(), (dir) -> {
+                            return rc.canBuild(dir, RobotType.SOLDIER);
+                        });
+                        if (rc.canBuild(buildDirection, RobotType.SOLDIER)) {
+                            rc.build(buildDirection, RobotType.SOLDIER);
+                            return;
                         }
                     }
-                    if (closestPartLocation != null) {
-                        proposedDirection = rc.getLocation().directionTo(closestPartLocation);
-                        if (proposedDirection != Direction.NONE) {
-                            rc.setIndicatorString(0, "Resource Found at: " + proposedDirection);
+                    if (enemyCount > 0) {
+                        MapLocation loc = new MapLocation(x / enemyCount, y / enemyCount);
+                        if (!loc.equals(rc.getLocation())) {
+                            proposedDirection = rc.getLocation().directionTo(loc);
 
-                            prefDirection = proposedDirection;  // We see resource. Let's go there!
+                            rc.setIndicatorString(0, "Enemy Found at: " + proposedDirection);
+
+                            if (proposedDirection != Direction.NONE) {
+                                prefDirection = proposedDirection;
+                                foundEnemy = true;
+                            }
+
+                            // Let's tell everyone there's an enemy nearby.
+                            if (movesignaldelay <= 0 && proposedDirection != Direction.NONE) {
+                                rc.broadcastMessageSignal(CMD_DIRECTION, proposedDirection.ordinal(), sensorRange * 2);
+                                movesignaldelay = 4;
+                                return;
+                            } else {
+                                // if target unit actually has a meaningful attack, and we're in their range...
+                                // we probably want to move back
+                                if (closestEnemy.attackPower > 0 && closestEnemy.type.attackRadiusSquared <= closestEnemyDistance) {
+                                    // How about we try move back a step mhmm?
+                                    proposedDirection = proposedDirection.opposite();
+                                } else if (enemyCount > friendlyCount / 2 || enemyCount > 4) {
+                                    // if there are at least half as many enemies in vision as friendlies...
+                                    // or there are at least 4 enemies
+                                    // SHOUT
+                                    rc.setIndicatorString(0, "Crying for Help for location: " + loc);
+                                    proposedDirection = Direction.NONE;
+                                    rc.broadcastMessageSignal(CMD_HELP, encodeLocation(loc), sensorRange * 20);
+                                    return;
+                                }
+                            }
+                        }
+                    } else {
+                        // Let's check for nearby resources
+                        MapLocation[] partLocations = rc.sensePartLocations(sensorRange);
+                        MapLocation closestPartLocation = null;
+                        int closestPartLocationDistance = Integer.MAX_VALUE;
+                        for (MapLocation location : partLocations) {
+                            int distance = location.distanceSquaredTo(rc.getLocation());
+                            if (distance < closestPartLocationDistance) {
+                                closestPartLocationDistance = distance;
+                                closestPartLocation = location;
+                            }
+                        }
+                        if (closestPartLocation != null) {
+                            proposedDirection = rc.getLocation().directionTo(closestPartLocation);
+                            if (proposedDirection != Direction.NONE) {
+                                rc.setIndicatorString(0, "Resource Found at: " + proposedDirection);
+
+                                prefDirection = proposedDirection;  // We see resource. Let's go there!
+                                headingForResources = true;
+                            }
                         }
                     }
                 }
@@ -171,8 +210,10 @@ public class ArchonAI extends RobotAI {
                         // Otherwise, don't.
 
 
-                        // Do this a third of the time rather then every time.
-                        if (fate % 6 < 1) {    // 1 in 6
+                        if (headingForResources || foundEnemy) {
+                            moveDirection = Direction.NONE; // We really want that resource...
+                            // do nothing
+                        } else if (fate % 6 < 1) {    // 1 in 6
                             prefDirection = moveDirection;
                             // Always send a new signal out whenever we change pref direction
                             rc.broadcastMessageSignal(CMD_DIRECTION, prefDirection.ordinal(), sensorRange * 2);
