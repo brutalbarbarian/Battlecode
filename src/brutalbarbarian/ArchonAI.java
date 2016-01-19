@@ -170,10 +170,12 @@ public class ArchonAI extends RobotAI {
                         MapLocation closestPartLocation = null;
                         int closestPartLocationDistance = Integer.MAX_VALUE;
                         for (MapLocation location : partLocations) {
-                            int distance = location.distanceSquaredTo(rc.getLocation());
-                            if (distance < closestPartLocationDistance) {
-                                closestPartLocationDistance = distance;
-                                closestPartLocation = location;
+                            if (rc.senseRobotAtLocation(location) == null) {
+                                int distance = location.distanceSquaredTo(rc.getLocation());
+                                if (distance < closestPartLocationDistance) {
+                                    closestPartLocationDistance = distance;
+                                    closestPartLocation = location;
+                                }
                             }
                         }
                         if (closestPartLocation != null) {

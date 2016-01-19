@@ -138,8 +138,13 @@ public class SoldierAI extends RobotAI {
                             attackRange) {
                         // if we're ordered to move in that general direction... stop cause we're too close to the enemy
                         Direction dirToEnemy = rc.getLocation().directionTo(closestEnemy.location);
-                        if (distanceBetween(dirToEnemy, orderedDirection) >= 2) {
-                            return;
+                        if (distanceBetween(dirToEnemy, orderedDirection) < 2) {
+                            // attempt to move in the opposite direction
+                            moveDirection = getClosestValidDirection(dirToEnemy.opposite(), dir -> {return rc.canMove(dir);});
+                            if (distanceBetween(moveDirection, dirToEnemy) < 2) {
+                                return; // just stop. don't try to move closer to the enemy.
+                            }
+//                            return;
                         }
                     }
                 }
